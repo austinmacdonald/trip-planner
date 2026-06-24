@@ -1,18 +1,13 @@
-import {
-  flattenStops,
-  matchStopToGroundingChunk,
-} from "./match-places";
-import type {
-  EnrichedStop,
-  EnrichPlacesRequest,
-  GroundingChunk,
-  TripItinerary,
-} from "./types";
+import { flattenStops } from "./match-places";
+import type { EnrichedStop, EnrichPlacesRequest, TripItinerary } from "./types";
 
-const PLACE_FIELD_MASK =
-  "id,displayName,location,formattedAddress,rating,photos,currentOpeningHours";
+// Minimal field mask — skips photos/hours for faster Places responses
+const SEARCH_FIELD_MASK =
+  "places.id,places.formattedAddress,places.location,places.rating,places.googleMapsUri";
 
 interface PlaceDetails {
+  placeId?: string;
+  mapsUri?: string;
   lat?: number;
   lng?: number;
   formattedAddress?: string;
@@ -31,8 +26,13 @@ function getMapsApiKey(): string {
   return key;
 }
 
-function extractPlaceId(placeId: string): string {
-  return placeId.startsWith("places/") ? placeId.slice("places/".length) : placeId;
+function buildMapsUri(placeId: string): string {
+  const id = placeId.startsWith("places/") ? placeId.slice("places/".length) : placeId;
+  return `https://www.google.com/maps/search/?api=1&query_place_id=${id}`;
+}
+
+function cacheKey(stopName: string, destination: string): string {
+  return `${stopName.trim().toLowerCase()}|${destination.trim().toLowerCase()}`;
 }
 
 export async function geocodeDestination(
@@ -57,42 +57,67 @@ export async function geocodeDestination(
   return { lat: location.lat, lng: location.lng };
 }
 
-async function fetchPlaceDetails(placeId: string): Promise<PlaceDetails | null> {
+async function searchPlace(
+  stopName: string,
+  destination: string,
+  destinationCoords?: { lat: number; lng: number } | null
+): Promise<PlaceDetails | null> {
   const apiKey = getMapsApiKey();
-  const id = extractPlaceId(placeId);
-  const url = `https://places.googleapis.com/v1/places/${id}`;
 
-  const response = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": apiKey,
-      "X-Goog-FieldMask": PLACE_FIELD_MASK,
-    },
-  });
+  const body: Record<string, unknown> = {
+    textQuery: `${stopName}, ${destination}`,
+    maxResultCount: 1,
+  };
+
+  if (destinationCoords) {
+    body.locationBias = {
+      circle: {
+        center: {
+          latitude: destinationCoords.lat,
+          longitude: destinationCoords.lng,
+        },
+        radius: 50000,
+      },
+    };
+  }
+
+  const response = await fetch(
+    "https://places.googleapis.com/v1/places:searchText",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": SEARCH_FIELD_MASK,
+      },
+      body: JSON.stringify(body),
+    }
+  );
 
   if (!response.ok) return null;
 
   const data = (await response.json()) as {
-    location?: { latitude?: number; longitude?: number };
-    formattedAddress?: string;
-    rating?: number;
-    photos?: { name?: string }[];
-    currentOpeningHours?: { weekdayDescriptions?: string[] };
+    places?: {
+      id?: string;
+      googleMapsUri?: string;
+      location?: { latitude?: number; longitude?: number };
+      formattedAddress?: string;
+      rating?: number;
+    }[];
   };
 
-  let photoUrl: string | undefined;
-  const photoName = data.photos?.[0]?.name;
-  if (photoName) {
-    photoUrl = `https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=400&maxWidthPx=400&key=${apiKey}`;
+  const place = data.places?.[0];
+  if (!place?.id || place.location?.latitude == null || place.location?.longitude == null) {
+    return null;
   }
 
   return {
-    lat: data.location?.latitude,
-    lng: data.location?.longitude,
-    formattedAddress: data.formattedAddress,
-    rating: data.rating,
-    photoUrl,
-    openingHours: data.currentOpeningHours?.weekdayDescriptions?.join("; "),
+    placeId: place.id,
+    mapsUri: place.googleMapsUri ?? buildMapsUri(place.id),
+    lat: place.location.latitude,
+    lng: place.location.longitude,
+    formattedAddress: place.formattedAddress,
+    rating: place.rating,
   };
 }
 
@@ -115,74 +140,90 @@ async function geocodeStop(
     results?: {
       geometry?: { location?: { lat: number; lng: number } };
       formatted_address?: string;
+      place_id?: string;
     }[];
   };
 
   const result = data.results?.[0];
   if (!result?.geometry?.location) return null;
 
+  const placeId = result.place_id;
   return {
+    placeId: placeId ? `places/${placeId}` : undefined,
+    mapsUri: placeId ? buildMapsUri(placeId) : undefined,
     lat: result.geometry.location.lat,
     lng: result.geometry.location.lng,
     formattedAddress: result.formatted_address,
   };
 }
 
-export async function enrichItineraryStops(
-  itinerary: TripItinerary,
-  groundingChunks: GroundingChunk[]
-): Promise<EnrichedStop[]> {
-  const usedPlaceIds = new Set<string>();
-  const flatStops = flattenStops(itinerary);
-  const enriched: EnrichedStop[] = [];
-
-  for (let i = 0; i < flatStops.length; i++) {
-    const { day, dayTitle, stopIndex, stop } = flatStops[i];
-    const id = `day-${day}-stop-${stopIndex}`;
-
-    const match = matchStopToGroundingChunk(
-      stop.name,
-      groundingChunks,
-      usedPlaceIds
-    );
-
-    let details: PlaceDetails | null = null;
-    if (match) {
-      usedPlaceIds.add(match.placeId);
-      details = await fetchPlaceDetails(match.placeId);
-    }
-
-    if (!details?.lat || !details?.lng) {
-      details = await geocodeStop(stop.name, itinerary.destination);
-    }
-
-    enriched.push({
-      id,
-      day,
-      dayTitle,
-      globalIndex: i + 1,
-      name: stop.name,
-      timeSlot: stop.timeSlot,
-      description: stop.description,
-      category: stop.category,
-      estimatedDuration: stop.estimatedDuration,
-      placeId: match?.placeId,
-      mapsUri: match?.uri,
-      lat: details?.lat,
-      lng: details?.lng,
-      formattedAddress: details?.formattedAddress,
-      rating: details?.rating,
-      photoUrl: details?.photoUrl,
-      openingHours: details?.openingHours,
-      matched: Boolean(match && details?.lat != null),
-    });
+async function resolveStopDetails(
+  stopName: string,
+  destination: string,
+  destinationCoords: { lat: number; lng: number } | null | undefined,
+  cache: Map<string, PlaceDetails | null>
+): Promise<PlaceDetails | null> {
+  const key = cacheKey(stopName, destination);
+  if (cache.has(key)) {
+    return cache.get(key) ?? null;
   }
 
-  return enriched;
+  const details =
+    (await searchPlace(stopName, destination, destinationCoords)) ??
+    (await geocodeStop(stopName, destination));
+
+  cache.set(key, details);
+  return details;
+}
+
+export async function enrichItineraryStops(
+  itinerary: TripItinerary,
+  destinationCoords?: { lat: number; lng: number } | null
+): Promise<EnrichedStop[]> {
+  const flatStops = flattenStops(itinerary);
+  const cache = new Map<string, PlaceDetails | null>();
+
+  return Promise.all(
+    flatStops.map(async ({ day, dayTitle, stopIndex, stop }, i) => {
+      const id = `day-${day}-stop-${stopIndex}`;
+      const details = await resolveStopDetails(
+        stop.name,
+        itinerary.destination,
+        destinationCoords,
+        cache
+      );
+
+      const matched = Boolean(
+        details?.lat != null && details?.lng != null && details?.placeId
+      );
+
+      return {
+        id,
+        day,
+        dayTitle,
+        globalIndex: i + 1,
+        name: stop.name,
+        timeSlot: stop.timeSlot,
+        description: stop.description,
+        category: stop.category,
+        estimatedDuration: stop.estimatedDuration,
+        placeId: details?.placeId,
+        mapsUri: details?.mapsUri,
+        lat: details?.lat,
+        lng: details?.lng,
+        formattedAddress: details?.formattedAddress,
+        rating: details?.rating,
+        photoUrl: details?.photoUrl,
+        openingHours: details?.openingHours,
+        matched,
+      };
+    })
+  );
 }
 
 export async function enrichPlaces(
-  request: EnrichPlacesRequest
+  request: EnrichPlacesRequest,
+  destinationCoords?: { lat: number; lng: number } | null
 ): Promise<EnrichedStop[]> {
-  return enrichItineraryStops(request.itinerary, request.groundingChunks);
+  return enrichItineraryStops(request.itinerary, destinationCoords);
 }

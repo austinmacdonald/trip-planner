@@ -82,7 +82,7 @@ export default function ItineraryPanel({
           />
         ))}
 
-        {enrichedStops.some((stop) => stop.mapsUri) && (
+        {enrichedStops.some((stop) => stop.placeId) && (
           <p className="text-xs text-zinc-400">
             Place data provided by Google Maps.{" "}
             <a

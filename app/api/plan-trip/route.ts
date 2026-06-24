@@ -21,32 +21,19 @@ export async function POST(request: Request) {
       );
     }
 
-    let destinationLat = body.destinationLat;
-    let destinationLng = body.destinationLng;
-
-    if (destinationLat == null || destinationLng == null) {
-      const geocoded = await geocodeDestination(body.destination);
-      if (geocoded) {
-        destinationLat = geocoded.lat;
-        destinationLng = geocoded.lng;
-      }
-    }
-
-    const { itinerary, groundingChunks } = await planTripWithGemini({
-      ...body,
-      destinationLat,
-      destinationLng,
-    });
+    const [destinationCoords, itinerary] = await Promise.all([
+      geocodeDestination(body.destination),
+      planTripWithGemini(body),
+    ]);
 
     const enrichedStops = await enrichItineraryStops(
       itinerary,
-      groundingChunks
+      destinationCoords
     );
 
     return NextResponse.json({
       itinerary,
       enrichedStops,
-      groundingChunks,
     });
   } catch (error) {
     const message =

@@ -1,24 +1,28 @@
 import { NextResponse } from "next/server";
-import { enrichPlaces } from "@/lib/places";
+import { enrichPlaces, geocodeDestination } from "@/lib/places";
 import type { EnrichPlacesRequest } from "@/lib/types";
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as EnrichPlacesRequest;
 
-    if (!body.itinerary || !Array.isArray(body.groundingChunks)) {
+    if (!body.itinerary) {
       return NextResponse.json(
-        { error: "itinerary and groundingChunks are required." },
+        { error: "itinerary is required." },
         { status: 400 }
       );
     }
 
-    const enrichedStops = await enrichPlaces(body);
+    const destinationCoords =
+      body.destinationCoords ??
+      (await geocodeDestination(body.itinerary.destination));
+
+    const enrichedStops = await enrichPlaces(body, destinationCoords);
 
     return NextResponse.json({ enrichedStops });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to enrich places.";
+      error instanceof Error ? error.message : "Failed to resolve places.";
     console.error("enrich-places error:", error);
     return NextResponse.json({ error: message }, { status: 500 });
   }

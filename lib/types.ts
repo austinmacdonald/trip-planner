@@ -8,8 +8,6 @@ export interface TripRequest {
   budget: Budget;
   pace: Pace;
   startDate?: string;
-  destinationLat?: number;
-  destinationLng?: number;
 }
 
 export interface TripStop {
@@ -31,12 +29,6 @@ export interface TripItinerary {
   durationDays: number;
   summary: string;
   days: TripDay[];
-}
-
-export interface GroundingChunk {
-  placeId: string;
-  title: string;
-  uri: string;
 }
 
 export interface EnrichedStop {
@@ -63,10 +55,9 @@ export interface EnrichedStop {
 export interface PlanTripResponse {
   itinerary: TripItinerary;
   enrichedStops: EnrichedStop[];
-  groundingChunks: GroundingChunk[];
 }
 
 export interface EnrichPlacesRequest {
   itinerary: TripItinerary;
-  groundingChunks: GroundingChunk[];
+  destinationCoords?: { lat: number; lng: number };
 }
