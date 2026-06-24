@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Trip Planner
 
-## Getting Started
+A Next.js web app that uses **Google Gemini** (with Grounding with Google Maps) to generate day-by-day trip itineraries, then displays stops and routes on an interactive **Google Map**.
 
-First, run the development server:
+## Features
+
+- Trip form: destination, days, interests, budget, pace, optional start date
+- Gemini generates structured itineraries grounded in real Google Maps places
+- Split-panel UI: scrollable itinerary on the left, interactive map on the right
+- Numbered map markers color-coded by day
+- Walking route polyline connecting stops in order
+- Click a stop in the list to highlight it on the map
+- Google Maps attribution links on grounded places
+
+## Prerequisites
+
+1. [Gemini API key](https://aistudio.google.com/apikey) from Google AI Studio
+2. [Google Maps Platform API key](https://console.cloud.google.com/google/maps-apis) with these APIs enabled:
+   - Maps JavaScript API
+   - Places API (New)
+   - Routes API (or Directions API)
+   - Geocoding API
+
+## Setup
+
+```bash
+cd trip-planner
+npm install
+cp .env.local.example .env.local
+```
+
+Edit `.env.local` with your keys:
+
+```
+GEMINI_API_KEY=your_gemini_key
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_maps_key
+GOOGLE_MAPS_API_KEY=your_maps_key
+```
+
+Restrict your Maps API key by HTTP referrer (`http://localhost:3000/*` for local dev) in Google Cloud Console.
+
+## Run
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Usage
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Enter a destination (e.g. "Tokyo, Japan")
+2. Set trip length, interests, budget, and pace
+3. Click **Generate itinerary**
+4. Browse the day-by-day plan on the left; explore stops on the map on the right
+5. Click any stop to highlight its marker and open an info window
 
-## Learn More
+## API Routes
 
-To learn more about Next.js, take a look at the following resources:
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/plan-trip` | POST | Calls Gemini with Maps grounding, enriches places, returns full itinerary |
+| `/api/enrich-places` | POST | Resolves grounding place IDs to coordinates via Places API |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Cost Notes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Grounding with Google Maps: ~$25 per 1,000 grounded prompts
+- Maps JavaScript, Places, Geocoding, and Routes APIs have separate usage-based pricing
 
-## Deploy on Vercel
+## Tech Stack
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Next.js 16 (App Router) + TypeScript
+- Tailwind CSS
+- `@google/genai` — Gemini API with Maps grounding + structured JSON output
+- `@vis.gl/react-google-maps` — Maps JavaScript API rendering
